@@ -1,0 +1,23 @@
+{{define "history"}}
+{{template "header" .}}
+<div class="page-head">
+  <div>
+    <h1>{{.Agent.Hostname}} <span class="muted mono">history</span></h1>
+    <p class="muted">Diff between consecutive polls (newest first).</p>
+  </div>
+  <nav class="tabs"><a href="/agents/{{.Agent.ID}}">← Entries</a></nav>
+</div>
+
+{{if not .Diffs}}<p class="muted">No snapshots yet.</p>{{end}}
+{{range .Diffs}}
+<section class="diff">
+  <h2>{{timeIn .CollectedAt $.Loc}} <span class="muted">({{rel .CollectedAt $.Now}})</span></h2>
+  {{if not .Added}}{{if not .Removed}}<p class="muted">No changes.</p>{{end}}{{end}}
+  <ul class="difflist">
+    {{range .Added}}<li class="add">+ <code class="mono">{{.User}} {{.RawLine}}</code></li>{{end}}
+    {{range .Removed}}<li class="del">− <code class="mono">{{.User}} {{.RawLine}}</code></li>{{end}}
+  </ul>
+</section>
+{{end}}
+{{template "footer" .}}
+{{end}}

@@ -1,0 +1,58 @@
+{{define "agent"}}
+{{template "header" .}}
+<div class="page-head">
+  <div>
+    <h1>{{.Agent.Hostname}} <span class="muted mono">{{.Agent.IP}}</span></h1>
+    <p class="muted">
+      {{if eq .Agent.Status "online"}}<span class="dot online">🟢</span> online{{else}}<span class="dot offline">🔴</span> offline{{end}}
+      · last seen {{if .Agent.LastSeenAt.IsZero}}never{{else}}{{rel .Agent.LastSeenAt $.Now}} ({{timeIn .Agent.LastSeenAt $.Loc}}){{end}}
+      · tz {{.Agent.Timezone}} · agent {{.Agent.AgentVersion}}
+    </p>
+  </div>
+  <nav class="tabs">
+    <a href="/agents/{{.Agent.ID}}/history">History</a>
+    <a href="/">← All agents</a>
+  </nav>
+</div>
+
+<form class="filters" method="get" action="/agents/{{.Agent.ID}}">
+  <select name="source">
+    <option value="">All sources</option>
+    {{range .Sources}}{{if eq . $.Filter.Source}}<option value="{{.}}" selected>{{srcTitle .}}</option>{{else}}<option value="{{.}}">{{srcTitle .}}</option>{{end}}{{end}}
+  </select>
+  <input name="user" placeholder="user" value="{{.Filter.User}}">
+  <label><input type="checkbox" name="only_new" value="1" {{if .Filter.OnlyNew}}checked{{end}}> only new</label>
+  <button type="submit">Filter</button>
+</form>
+
+{{range .Groups}}
+<h2 class="group-head">{{.Title}}</h2>
+<table class="tbl entries">
+  <tbody>
+    {{range .Entries}}
+    {{template "entryrow" dict "E" . "Now" $.Now "Loc" $.Loc}}
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">No entries match the current filters.</p>
+{{end}}
+{{template "footer" .}}
+{{end}}
+
+{{define "entryrow"}}
+<tr id="entry-{{.E.ID}}" class="{{if eq .E.Status "removed"}}removed{{end}}">
+  <td class="nowrap">
+    {{if isNew .E .Now}}<span class="badge">NEW</span>{{end}}
+    {{if eq .E.Status "removed"}}<span class="badge gray">REMOVED</span>{{end}}
+  </td>
+  <td class="mono user">{{.E.User}}</td>
+  <td class="mono rawline"><code>{{.E.RawLine}}</code></td>
+  <td class="muted nowrap">{{timeIn .E.FirstSeenAt .Loc}}</td>
+  <td class="nowrap">
+    {{if and (eq .E.Status "active") (not .E.AckedAt)}}
+    <button class="ack" hx-post="/api/v1/entries/{{.E.ID}}/ack" hx-target="#entry-{{.E.ID}}" hx-swap="outerHTML">Ack</button>
+    {{end}}
+  </td>
+</tr>
+{{end}}

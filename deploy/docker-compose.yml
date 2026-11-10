@@ -1,0 +1,25 @@
+services:
+  cron-checker:
+    image: cron-checker-server:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: cron-checker
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    env_file:
+      - .env
+    environment:
+      DB_PATH: /data/cron-checker.db
+    volumes:
+      - cron_checker_data:/data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/cron-checker-server", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  cron_checker_data:

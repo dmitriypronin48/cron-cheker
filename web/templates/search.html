@@ -1,0 +1,23 @@
+{{define "search"}}
+{{template "header" .}}
+<h1>Search results for “{{.Query}}”</h1>
+{{if .Results}}
+<table class="tbl">
+  <thead><tr><th>Hostname</th><th>IP</th><th>Source</th><th>User</th><th>Line</th></tr></thead>
+  <tbody>
+    {{range .Results}}
+    <tr class="rowlink" onclick="location.href='/agents/{{.AgentID}}'">
+      <td>{{.Hostname}}</td>
+      <td class="mono">{{.IP}}</td>
+      <td>{{srcTitle .Source}}</td>
+      <td class="mono">{{.User}}</td>
+      <td class="mono rawline"><code>{{.Highlighted}}</code></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">Nothing found.</p>
+{{end}}
+{{template "footer" .}}
+{{end}}

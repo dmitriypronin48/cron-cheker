@@ -1,0 +1,23 @@
+[Unit]
+Description=cron-checker agent (passive cron inventory collector)
+Documentation=https://example.com/cron-checker
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+# Root is required to read per-user crontabs of all users.
+User=root
+Group=root
+EnvironmentFile=-/etc/cron-checker/agent.env
+ExecStart=/usr/bin/cron-checker-agent
+Restart=on-failure
+RestartSec=5s
+
+# Hardening (relaxed enough to read /var/spool/cron* of all users).
+ProtectSystem=full
+ProtectHome=read-only
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

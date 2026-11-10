@@ -1,0 +1,45 @@
+{{define "index"}}
+{{template "header" .}}
+<div class="page-head">
+  <h1>Agents</h1>
+  <form class="inline-form" action="/api/v1/agents" method="post"
+        onsubmit="return addAgent(this)">
+    <input name="hostname" placeholder="hostname" required>
+    <input name="ip" placeholder="IP address" required>
+    <button type="submit">Add agent</button>
+  </form>
+</div>
+<table class="tbl">
+  <thead>
+    <tr>
+      <th>Hostname</th><th>IP</th><th>Status</th><th>Last seen</th>
+      <th class="num">Entries</th><th class="num">New</th><th>Timezone</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Agents}}
+    <tr class="rowlink" onclick="location.href='/agents/{{.ID}}'">
+      <td>{{.Hostname}}</td>
+      <td class="mono">{{.IP}}</td>
+      <td>{{if eq .Status "online"}}<span class="dot online" title="online">🟢</span> online{{else}}<span class="dot offline" title="offline">🔴</span> offline{{end}}</td>
+      <td>{{if .LastSeenAt.IsZero}}never{{else}}{{rel .LastSeenAt $.Now}} <span class="muted">({{timeIn .LastSeenAt $.Loc}})</span>{{end}}</td>
+      <td class="num">{{.EntriesCount}}</td>
+      <td class="num">{{if .NewCount}}<span class="badge">{{.NewCount}}</span>{{else}}0{{end}}</td>
+      <td>{{.Timezone}}</td>
+    </tr>
+    {{else}}
+    <tr><td colspan="7" class="muted">No agents yet. Add one above.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+<script>
+function addAgent(f) {
+  var data = {hostname: f.hostname.value, ip: f.ip.value};
+  fetch('/api/v1/agents', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)})
+    .then(function(r){ if (!r.ok) { alert('Failed to add agent'); return; } location.reload(); })
+    .catch(function(){ alert('Failed to add agent'); });
+  return false;
+}
+</script>
+{{template "footer" .}}
+{{end}}

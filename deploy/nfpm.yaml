@@ -1,0 +1,32 @@
+project_name: cron-checker-agent
+arch: amd64
+platform: linux
+version: 0.1.0
+maintainer: cron-checker <noreply@example.com>
+description: Cron checker agent — exposes local cron/systemd-timer state over HTTP
+license: MIT
+contents:
+  - src: bin/cron-checker-agent-linux-amd64
+    dst: /usr/bin/cron-checker-agent
+  - src: deploy/cron-checker-agent.service
+    dst: /etc/systemd/system/cron-checker-agent.service
+  - src: deploy/agent.env.example
+    dst: /etc/cron-checker/agent.env
+    type: config|noreplace
+overrides:
+  rpm:
+    depends:
+      - systemd
+  deb:
+    depends:
+      - systemd
+scripts:
+  postinstall: |
+    #!/bin/sh
+    systemctl daemon-reload || true
+    systemctl enable cron-checker-agent.service || true
+    systemctl start cron-checker-agent.service || true
+  preremove: |
+    #!/bin/sh
+    systemctl stop cron-checker-agent.service || true
+    systemctl disable cron-checker-agent.service || true

@@ -1,0 +1,4 @@
+bin/
+deploy/.env
+*.tar
+*.tar.gz
