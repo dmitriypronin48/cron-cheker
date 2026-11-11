@@ -29,8 +29,8 @@ type Metrics struct {
 	pollDuration    prometheus.Histogram
 	pollErrorsTotal *prometheus.CounterVec
 
-	mu      sync.Mutex
-	lastErr float64 // exported as cron_checker_store_refresh_errors_total-ish simplicity: logged only
+	mu              sync.Mutex
+	knownNewEntries map[newEntryKey]bool // label combos ever reported as new; kept at 0 afterwards
 }
 
 // NewMetrics creates a Metrics bound to its own registry.
@@ -39,13 +39,14 @@ func NewMetrics(st *store.Store, log *slog.Logger) *Metrics {
 		log = slog.Default()
 	}
 	m := &Metrics{
-		store: st,
-		log:   log,
+		store:           st,
+		log:             log,
+		knownNewEntries: map[newEntryKey]bool{},
 		agentsTotal: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: "cron_checker",
 			Name:      "agents_total",
-			Help:      "Number of agents by status.",
-		}, []string{"status"}),
+			Help:      "Agents by hostname, ip and status (1 for the current status).",
+		}, []string{"hostname", "ip", "status"}),
 		agentUp: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: "cron_checker",
 			Name:      "agent_up",
@@ -69,7 +70,7 @@ func NewMetrics(st *store.Store, log *slog.Logger) *Metrics {
 		newEntry: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: "cron_checker",
 			Name:      "new_entry",
-			Help:      "A cron entry first seen within the last 24h that is still unacked (1). Labels identify the added line and its agent.",
+			Help:      "A cron entry first seen within the last 24h: 1 while it is new (unacked), 0 after Ack or after 24h. Labels identify the added line and its agent.",
 		}, []string{"hostname", "ip", "source", "raw_line"}),
 		pollDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: "cron_checker",
@@ -90,6 +91,11 @@ func NewMetrics(st *store.Store, log *slog.Logger) *Metrics {
 		m.newEntries, m.newEntry, m.pollDuration, m.pollErrorsTotal,
 	)
 	return m
+}
+
+// newEntryKey identifies one cron_checker_new_entry series.
+type newEntryKey struct {
+	hostname, ip, source, rawLine string
 }
 
 // ObservePollDuration records a single-agent poll duration.
@@ -121,18 +127,16 @@ func (m *Metrics) refresh(ctx context.Context) {
 		m.log.WarnContext(ctx, "metrics refresh: list agents", "error", err)
 		return
 	}
-	online, offline, err := m.store.AgentsByStatus(ctx)
-	if err != nil {
-		m.log.WarnContext(ctx, "metrics refresh: agents by status", "error", err)
-	} else {
-		m.agentsTotal.WithLabelValues(model.AgentStatusOnline).Set(float64(online))
-		m.agentsTotal.WithLabelValues(model.AgentStatusOffline).Set(float64(offline))
+
+	// Per-agent status: 1 for the current status of each agent.
+	m.agentsTotal.Reset()
+	for _, a := range agents {
+		m.agentsTotal.WithLabelValues(a.Hostname, a.IP, a.Status).Set(1)
 	}
 
 	m.agentUp.Reset()
 	m.agentLastSeen.Reset()
 	m.newEntries.Reset()
-	m.newEntry.Reset()
 	for _, a := range agents {
 		up := 0.0
 		if a.Status == model.AgentStatusOnline {
@@ -168,8 +172,21 @@ func (m *Metrics) refresh(ctx context.Context) {
 	if err != nil {
 		m.log.WarnContext(ctx, "metrics refresh: list new entries", "error", err)
 	} else {
+		current := make(map[newEntryKey]bool, len(newEntries))
 		for _, e := range newEntries {
+			k := newEntryKey{hostname: e.Hostname, ip: e.IP, source: e.Source, rawLine: e.RawLine}
+			current[k] = true
 			m.newEntry.WithLabelValues(e.Hostname, e.IP, e.Source, e.RawLine).Set(1)
+		}
+		// Series seen before but no longer new (acked or older than 24h)
+		// stay exported with value 0 instead of disappearing.
+		for k := range m.knownNewEntries {
+			if !current[k] {
+				m.newEntry.WithLabelValues(k.hostname, k.ip, k.source, k.rawLine).Set(0)
+			}
+		}
+		for k := range current {
+			m.knownNewEntries[k] = true
 		}
 	}
 }

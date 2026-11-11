@@ -9,7 +9,7 @@ Type=simple
 # Root is required to read per-user crontabs of all users.
 User=root
 Group=root
-EnvironmentFile=-/etc/cron-checker/agent.env
+EnvironmentFile=-/etc/cron-checker/agent.yaml
 ExecStart=/usr/bin/cron-checker-agent
 Restart=on-failure
 RestartSec=5s

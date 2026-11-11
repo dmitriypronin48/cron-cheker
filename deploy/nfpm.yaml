@@ -10,8 +10,8 @@ contents:
     dst: /usr/bin/cron-checker-agent
   - src: deploy/cron-checker-agent.service
     dst: /etc/systemd/system/cron-checker-agent.service
-  - src: deploy/agent.env.example
-    dst: /etc/cron-checker/agent.env
+  - src: deploy/agent.config.example.yaml
+    dst: /etc/cron-checker/agent.yaml
     type: config|noreplace
 overrides:
   rpm:

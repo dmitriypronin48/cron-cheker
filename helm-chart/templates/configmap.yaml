@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cron-checker-server.fullname" . }}
+  labels:
+    {{- include "cron-checker-server.labels" . | nindent 4 }}
+data:
+  server.yaml: |
+    listen: {{ .Values.listen | quote }}
+    db_path: {{ .Values.dbPath | quote }}
+    token: {{ .Values.token | quote }}
+    poll_interval: {{ .Values.pollInterval | quote }}
+    poll_concurrency: {{ .Values.pollConcurrency }}
+    poll_timeout: {{ .Values.pollTimeout | quote }}
+    agent_port: {{ .Values.agentPort | quote }}
+    snapshot_retention_days: {{ .Values.snapshotRetentionDays }}
+    removed_retention_hours: {{ .Values.removedRetentionHours }}
+    log_level: {{ .Values.logLevel | quote }}
+    agents:
+      {{- toYaml .Values.agents | nindent 6 }}

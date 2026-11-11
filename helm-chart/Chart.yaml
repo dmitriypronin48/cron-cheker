@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cron-checker-server
+description: cron-checker central server (cron inventory collector with Web UI)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

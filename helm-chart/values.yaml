@@ -1,0 +1,62 @@
+# Default values for cron-checker-server.
+# The chart deploys the central server only; agents run on Linux hosts
+# outside Kubernetes and are listed in the `agents` inventory below.
+
+image:
+  repository: cron-checker-server
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Server configuration (rendered into /etc/cron-checker/server.yaml).
+# `token` must equal the agent tokens.
+token: "change-me"
+listen: ":8090"
+dbPath: /data/cron-checker.db
+pollInterval: 300s
+pollConcurrency: 10
+pollTimeout: 15s
+agentPort: "9300"
+snapshotRetentionDays: 7
+removedRetentionHours: 72
+logLevel: info
+
+# Agent inventory: one hostname/ip pair per line. Agents removed from this
+# list are deleted from the web UI and the DB on the next poll cycle.
+agents:
+  - hostname: web1
+    ip: 192.168.0.10
+
+service:
+  type: ClusterIP
+  port: 8090
+
+ingress:
+  enabled: true
+  className: traefik
+  host: cron-checker.example.com
+  annotations: {}
+  # annotations:
+  #   traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  #   traefik.ingress.kubernetes.io/router.tls: "true"
+  tls: []
+  # tls:
+  #   - hosts: [cron-checker.example.com]
+  #     secretName: cron-checker-tls
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+
+resources: {}
+  # requests:
+  #   cpu: 50m
+  #   memory: 64Mi
+  # limits:
+  #   memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -64,9 +64,9 @@ UI: http://localhost:8090 · `/healthz` · `/metrics`.
 # вариант 1: бинарник
 CRON_AGENT_TOKEN=<тот же токен> ./cron-checker-agent-linux-amd64
 
-# вариант 2: пакет (создаёт systemd unit и /etc/cron-checker/agent.env)
+# вариант 2: пакет (создаёт systemd unit и /etc/cron-checker/agent.yaml)
 sudo dpkg -i cron-checker-agent_0.1.0_amd64.deb   # или rpm -i …
-sudoedit /etc/cron-checker/agent.env              # CRON_AGENT_TOKEN
+sudoedit /etc/cron-checker/agent.yaml             # token: ...
 sudo systemctl restart cron-checker-agent
 ```
 
@@ -105,7 +105,7 @@ make docker-image
 
 ```bash
 sudo rpm -i cron-checker-agent-0.1.0-1.x86_64.rpm
-sudoedit /etc/cron-checker/agent.env   # CRON_AGENT_TOKEN=...
+sudoedit /etc/cron-checker/agent.yaml   # token: ...
 sudo systemctl enable --now cron-checker-agent
 sudo systemctl status cron-checker-agent
 curl -H "Authorization: Bearer $CRON_AGENT_TOKEN" http://127.0.0.1:9300/api/v1/cron
@@ -219,12 +219,13 @@ agents:                           # инвентарь: один хост — о
 Сервер (`/metrics`):
 
 ```
-cron_checker_agents_total{status="online|offline"}
+cron_checker_agents_total{hostname,ip,status}          # 1 для текущего статуса каждого агента
 cron_checker_agent_up{hostname,ip}
 cron_checker_agent_last_seen_timestamp{hostname,ip}
 cron_checker_entries_total{hostname,source,status}
 cron_checker_new_entries_24h{hostname}
-cron_checker_new_entry{hostname,ip,source,raw_line}   # 1 для каждой новой (≤24ч, не acked) записи
+cron_checker_new_entry{hostname,ip,source,raw_line}   # 1 пока запись новая (≤24ч, не acked);
+                                                      # 0 после Ack или по истечении 24ч (серия не удаляется)
 cron_checker_poll_duration_seconds   (histogram)
 cron_checker_poll_errors_total{hostname}
 ```
@@ -253,6 +254,26 @@ scrape_configs:
           - host2.example:9300
 ```
 
+## Kubernetes (Helm)
+
+В `helm-chart/` — чарт для деплоя **только сервера** в Kubernetes
+(агенты остаются на Linux-хостах вне кластера и опрашиваются по IP).
+Конфигурация сервера (`server.yaml`, включая инвентарь `agents:`)
+рендерится в ConfigMap и монтируется в контейнер, БД — на PVC.
+Ingress — Traefik (`ingress.className: traefik`).
+
+```bash
+helm install cron-checker ./helm-chart \
+  --set token=my-secret \
+  --set ingress.host=cron-checker.example.com
+# или со своим values.yaml:
+helm upgrade --install cron-checker ./helm-chart -f my-values.yaml
+```
+
+Перед установкой образ `cron-checker-server:latest` должен быть доступен
+кластеру (например, `docker save … | docker load` на нодах или приватный
+registry — см. `image.repository`/`image.tag` в `helm-chart/values.yaml`).
+
 ## Структура репозитория
 
 ```
@@ -263,6 +284,7 @@ scrape_configs:
 ├── internal/model            # общие типы
 ├── web/                      # templates + static (embed, HTMX локально)
 ├── deploy/                   # Dockerfile, compose, config-образцы (server+agent), systemd, nfpm, scripts
+├── helm-chart/               # Helm-чарт сервера для Kubernetes (Traefik ingress, ConfigMap)
 ├── Makefile
 └── TASK.md                   # исходное ТЗ
 ```
