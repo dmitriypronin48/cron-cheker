@@ -29,8 +29,12 @@
 <h2 class="group-head">{{.Title}}</h2>
 <table class="tbl entries">
   <tbody>
-    {{range .Entries}}
-    {{template "entryrow" dict "E" . "Now" $.Now "Loc" $.Loc}}
+    {{range .Items}}
+    {{if .Block}}
+    {{template "fileblock" dict "B" .Block "Now" $.Now "Loc" $.Loc}}
+    {{else}}
+    {{template "entryrow" dict "E" .Single "Now" $.Now "Loc" $.Loc}}
+    {{end}}
     {{end}}
   </tbody>
 </table>
@@ -38,6 +42,31 @@
 <p class="muted">No entries match the current filters.</p>
 {{end}}
 {{template "footer" .}}
+{{end}}
+
+{{define "fileblock"}}
+{{$b := .B}}
+{{$new := countNew $b.Lines .Now}}
+{{$ackable := countAckable $b.Lines}}
+<tr id="block-{{(index $b.Lines 0).ID}}">
+  <td class="nowrap">
+    {{if $new}}<span class="badge">NEW ×{{$new}}</span>{{end}}
+  </td>
+  <td class="mono user">{{$b.User}}</td>
+  <td class="mono rawline">
+    <details>
+      <summary><code>{{base $b.Path}}</code> <span class="muted">· {{len $b.Lines}} lines · {{$b.Path}}</span></summary>
+      <pre class="filecontent">{{range $b.Lines}}{{if isNew . $.Now}}<span class="badge">NEW</span> {{end}}{{.RawLine}}
+{{end}}</pre>
+    </details>
+  </td>
+  <td class="muted nowrap">{{timeIn (index $b.Lines 0).FirstSeenAt $.Loc}}</td>
+  <td class="nowrap">
+    {{if $ackable}}
+    <button class="ack" hx-post="/api/v1/entries/ack-block" hx-vals='{"ids":"{{ids $b.Lines}}"}' hx-target="#block-{{(index $b.Lines 0).ID}}" hx-swap="outerHTML">Ack all</button>
+    {{end}}
+  </td>
+</tr>
 {{end}}
 
 {{define "entryrow"}}

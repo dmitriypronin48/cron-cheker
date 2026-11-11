@@ -70,6 +70,20 @@ sudoedit /etc/cron-checker/agent.env              # CRON_AGENT_TOKEN
 sudo systemctl restart cron-checker-agent
 ```
 
+Периодичность обновления локального состояния cron (кэш агента, по
+умолчанию каждые 5 минут) задаётся в YAML-конфиге агента
+`/etc/cron-checker/agent.yaml`:
+
+```yaml
+token: "same-as-server"
+listen: ":9300"
+collect_interval: 5m     # 3m, 15m, 1h, ...
+log_level: info
+```
+
+Файл опционален: если его нет, работают env-переменные и флаги. Приоритет
+каждого параметра: **флаг > env > конфиг-файл > значение по умолчанию**.
+
 Затем добавьте хост (hostname + IP) в `agents:` файла `config.yaml`
 сервера — на следующем цикле опроса он появится в вебе.
 
@@ -123,6 +137,11 @@ curl -H "Authorization: Bearer $CRON_AGENT_TOKEN" http://127.0.0.1:9300/api/v1/c
 - `/agents/{id}` — записи, сгруппированные по источникам; бейдж **NEW**
   для записей моложе 24ч (снимается кнопкой **Ack**); фильтры по source/user;
   кнопка истории — diff со предыдущим snapshot.
+- Многострочные файлы (скрипты в `cron.weekly/` и т.п., а также файлы с
+  несколькими заданиями: `/etc/crontab`, `cron.d`) показываются **одной
+  сворачиваемой строкой**: имя файла, число строк и полный путь; клик
+  раскрывает весь файл целиком в моноширинном блоке. Кнопка **Ack all**
+  закрывает все строки файла разом.
 - `/search?q=` — поиск по hostname/ip/user/raw_line с подсветкой.
 - Время хранится в UTC, отображается в timezone агента.
 
@@ -138,6 +157,7 @@ curl -H "Authorization: Bearer $CRON_AGENT_TOKEN" http://127.0.0.1:9300/api/v1/c
 | GET | `/api/v1/agents/{id}/cron` | JSON entries (`?source=&user=&only_new=1`) |
 | GET | `/api/v1/agents/{id}/history` | JSON snapshots (последние N) |
 | POST | `/api/v1/entries/{id}/ack` | «закрыть» новую строку |
+| POST | `/api/v1/entries/ack-block` | ack всех строк файла (`ids=1,2,3`) |
 | GET | `/api/v1/search?q=` | JSON поиск |
 | GET | `/healthz`, `/metrics` | health, Prometheus |
 
@@ -182,11 +202,16 @@ agents:                           # инвентарь: один хост — о
 
 ### Агент
 
+Агент можно настроить тремя способами (по убыванию приоритета): флаги
+командной строки, переменные окружения, YAML-конфиг
+(`/etc/cron-checker/agent.yaml`, пример — `deploy/agent.config.example.yaml`).
+См. «Быстрый старт → Агент».
+
 | Переменная | По умолчанию | Описание |
 |---|---|---|
 | `CRON_AGENT_TOKEN` | — | **обязателен**, = `token` в конфиг-файле сервера |
 | `LISTEN_ADDR` | `:9300` | адрес HTTP |
-| `COLLECT_INTERVAL` | `300s` | кэш локального сбора (не путать с опросом) |
+| `COLLECT_INTERVAL` | `300s` (= `collect_interval`) | как часто агент перечитывает cron-файлы |
 | `LOG_LEVEL` | `info` | slog |
 
 ## Метрики Prometheus
@@ -237,7 +262,7 @@ scrape_configs:
 ├── internal/store            # SQLite, миграции, fingerprint
 ├── internal/model            # общие типы
 ├── web/                      # templates + static (embed, HTMX локально)
-├── deploy/                   # Dockerfile, compose, config.example.yaml, systemd, nfpm, scripts, env-образцы
+├── deploy/                   # Dockerfile, compose, config-образцы (server+agent), systemd, nfpm, scripts
 ├── Makefile
 └── TASK.md                   # исходное ТЗ
 ```

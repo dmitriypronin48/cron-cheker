@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -63,6 +65,7 @@ func NewServer(st *store.Store, metrics *Metrics, log *slog.Logger) (*Server, er
 		r.Get("/agents/{id}/cron", s.handleAPIAgentCron)
 		r.Get("/agents/{id}/history", s.handleAPIAgentHistory)
 		r.Post("/entries/{id}/ack", s.handleAPIAck)
+		r.Post("/entries/ack-block", s.handleAPIAckBlock)
 		r.Get("/search", s.handleAPISearch)
 	})
 
@@ -95,6 +98,33 @@ func templateFuncs() template.FuncMap {
 				m[pairs[i].(string)] = pairs[i+1]
 			}
 			return m
+		},
+		"base": path.Base,
+		"inc":  func(n int) int { return n + 1 },
+		"ids": func(lines []store.EntryRow) string {
+			parts := make([]string, len(lines))
+			for i, l := range lines {
+				parts[i] = strconv.FormatInt(l.ID, 10)
+			}
+			return strings.Join(parts, ",")
+		},
+		"countNew": func(lines []store.EntryRow, now time.Time) int {
+			n := 0
+			for _, l := range lines {
+				if l.Status == model.EntryStatusActive && l.AckedAt == nil && now.Sub(l.FirstSeenAt) < 24*time.Hour {
+					n++
+				}
+			}
+			return n
+		},
+		"countAckable": func(lines []store.EntryRow) int {
+			n := 0
+			for _, l := range lines {
+				if l.Status == model.EntryStatusActive && l.AckedAt == nil {
+					n++
+				}
+			}
+			return n
 		},
 	}
 }
@@ -266,6 +296,60 @@ func (s *Server) handleAPIAck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleAPIAckBlock acknowledges all ackable lines of a file block (a script
+// in cron.weekly etc.) in one click and re-renders the block fragment.
+func (s *Server) handleAPIAckBlock(w http.ResponseWriter, r *http.Request) {
+	raw := r.FormValue("ids")
+	if raw == "" {
+		writeError(w, http.StatusBadRequest, "ids are required")
+		return
+	}
+	var ids []int64
+	for _, p := range strings.Split(raw, ",") {
+		id, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid ids")
+			return
+		}
+		ids = append(ids, id)
+	}
+	n, err := s.st.AckEntries(r.Context(), ids)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Reload the lines and re-render the file block fragment.
+	var lines []store.EntryRow
+	var agentID int64
+	for _, id := range ids {
+		e, err := s.st.GetEntry(r.Context(), id)
+		if err != nil {
+			continue
+		}
+		lines = append(lines, e)
+		agentID = e.AgentID
+	}
+	if len(lines) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	sort.Slice(lines, func(i, j int) bool { return lines[i].LineNo < lines[j].LineNo })
+	a, err := s.st.GetAgent(r.Context(), agentID)
+	if err != nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.render(w, "fileblock", map[string]any{
+		"B":   fileBlock{Path: lines[0].Path, User: lines[0].User, Lines: lines},
+		"Now": time.Now().UTC(),
+		"Loc": loadLoc(a.Timezone),
+	})
+}
+
 func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	results, err := s.st.Search(r.Context(), q)
@@ -303,9 +387,24 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// fileBlock is a group of entries that are lines of the same file (e.g. a
+// script in cron.weekly). Rendered in the UI as one expandable row with the
+// full file content instead of one row per line.
+type fileBlock struct {
+	Path  string
+	User  string
+	Lines []store.EntryRow
+}
+
+// entryItem is either a standalone entry or a multi-line file block.
+type entryItem struct {
+	Single *store.EntryRow
+	Block  *fileBlock
+}
+
 type entryGroup struct {
-	Title   string
-	Entries []store.EntryRow
+	Title string
+	Items []entryItem
 }
 
 var sourceOrder = []string{
@@ -314,29 +413,64 @@ var sourceOrder = []string{
 	model.SourceCronMonthly, model.SourceSystemdTimer,
 }
 
+// groupEntries groups entries by source (keeping sourceOrder), and within a
+// source folds consecutive lines of the same file into one fileBlock.
 func groupEntries(entries []store.EntryRow) []entryGroup {
 	bySource := map[string][]store.EntryRow{}
 	var others []string
 	for _, e := range entries {
 		if _, ok := bySource[e.Source]; !ok {
 			others = append(others, e.Source)
+			bySource[e.Source] = []store.EntryRow{e}
+			continue
 		}
 		bySource[e.Source] = append(bySource[e.Source], e)
 	}
 	var groups []entryGroup
 	seen := map[string]bool{}
+	appendGroup := func(src string) {
+		groups = append(groups, entryGroup{Title: sourceTitle(src), Items: foldFiles(bySource[src])})
+		seen[src] = true
+	}
 	for _, src := range sourceOrder {
-		if es, ok := bySource[src]; ok {
-			groups = append(groups, entryGroup{Title: sourceTitle(src), Entries: es})
-			seen[src] = true
+		if _, ok := bySource[src]; ok {
+			appendGroup(src)
 		}
 	}
 	for _, src := range others {
 		if !seen[src] {
-			groups = append(groups, entryGroup{Title: sourceTitle(src), Entries: bySource[src]})
+			appendGroup(src)
 		}
 	}
 	return groups
+}
+
+// foldFiles folds runs of consecutive entries sharing the same non-empty
+// path into a single fileBlock; single-line files stay standalone entries.
+// Entries must be ordered by path, line_no (as returned by ListEntries).
+func foldFiles(entries []store.EntryRow) []entryItem {
+	var items []entryItem
+	for i := 0; i < len(entries); {
+		e := entries[i]
+		if e.Path == "" {
+			items = append(items, entryItem{Single: &entries[i]})
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(entries) && entries[j].Path == e.Path {
+			j++
+		}
+		if j-i == 1 {
+			items = append(items, entryItem{Single: &entries[i]})
+		} else {
+			lines := make([]store.EntryRow, j-i)
+			copy(lines, entries[i:j])
+			items = append(items, entryItem{Block: &fileBlock{Path: e.Path, User: e.User, Lines: lines}})
+		}
+		i = j
+	}
+	return items
 }
 
 func (s *Server) loadAgent(w http.ResponseWriter, r *http.Request) (store.AgentRow, bool) {

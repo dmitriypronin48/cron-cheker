@@ -1,0 +1,13 @@
+# cron-checker agent configuration (optional).
+# Default path: /etc/cron-checker/agent.yaml (override with -config or the
+# CRON_AGENT_CONFIG env var). If the file is absent, env vars are used.
+# Precedence for every field: flag > env var > this file > default.
+
+# Bearer token: must equal `token` in the server config. Required.
+token: "change-me"
+# HTTP listen address.
+listen: ":9300"
+# How often the agent re-scans local cron files: 3m, 15m, 1h, ...
+# Default: 5m.
+collect_interval: 5m
+log_level: info

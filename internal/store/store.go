@@ -482,6 +482,29 @@ func (s *Store) AckEntry(ctx context.Context, id int64) error {
 	return nil
 }
 
+// AckEntries marks all active entries among the given ids as acknowledged.
+// Returns the number of entries actually acked.
+func (s *Store) AckEntries(ctx context.Context, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	q := `UPDATE cron_entries SET acked_at = ?, status = 'acked' WHERE status = 'active' AND id IN (`
+	args := []any{time.Now().UTC().Format(time.RFC3339)}
+	for i, id := range ids {
+		if i > 0 {
+			q += ","
+		}
+		q += "?"
+		args = append(args, id)
+	}
+	q += ")"
+	res, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, fmt.Errorf("ack entries: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // Search finds entries by raw_line substring across all agents.
 func (s *Store) Search(ctx context.Context, q string) ([]SearchRow, error) {
 	rows, err := s.db.QueryContext(ctx,
