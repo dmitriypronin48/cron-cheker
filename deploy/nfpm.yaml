@@ -1,4 +1,4 @@
-project_name: cron-checker-agent
+name: cron-checker-agent
 arch: amd64
 platform: linux
 version: 0.1.0
@@ -21,12 +21,5 @@ overrides:
     depends:
       - systemd
 scripts:
-  postinstall: |
-    #!/bin/sh
-    systemctl daemon-reload || true
-    systemctl enable cron-checker-agent.service || true
-    systemctl start cron-checker-agent.service || true
-  preremove: |
-    #!/bin/sh
-    systemctl stop cron-checker-agent.service || true
-    systemctl disable cron-checker-agent.service || true
+  postinstall: deploy/scripts/postinstall.sh
+  preremove: deploy/scripts/preremove.sh

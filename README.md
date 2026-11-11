@@ -36,16 +36,20 @@ Pull-модель: центральный **сервер** периодичес�
 
 ### Сервер (docker compose)
 
+Compose использует готовый образ (секция `build` отсутствует) — перед
+запуском образ нужно собрать или загрузить:
+
 ```bash
+make docker-image            # собрать cron-checker-server:latest
+# либо загрузить готовый архив:
+docker load -i cron-checker-server-0.1.0.tar
+
 cd deploy
 cp .env.example .env        # задать CRON_SERVER_TOKEN!
 docker compose up -d
 ```
 
 UI: http://localhost:8090 · `/healthz` · `/metrics`.
-
-Готовый образ также лежит рядом с репозиторием:
-`cron-checker-server-0.1.0.tar` (загрузка: `docker load -i …`).
 
 ### Агент (Linux)
 
@@ -205,7 +209,7 @@ scrape_configs:
 ├── internal/store            # SQLite, миграции, fingerprint
 ├── internal/model            # общие типы
 ├── web/                      # templates + static (embed, HTMX локально)
-├── deploy/                   # Dockerfile, compose, systemd, nfpm, env-образцы
+├── deploy/                   # Dockerfile, compose, systemd, nfpm, scripts, env-образцы
 ├── Makefile
 └── TASK.md                   # исходное ТЗ
 ```

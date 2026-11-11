@@ -1,9 +1,6 @@
 services:
   cron-checker:
     image: cron-checker-server:latest
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
     container_name: cron-checker
     restart: unless-stopped
     ports:
