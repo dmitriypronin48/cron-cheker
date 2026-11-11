@@ -1,0 +1,29 @@
+# cron-checker server configuration.
+# Single file for both server settings and the agent inventory:
+# agents are added/removed here only (no web UI registration).
+# Copy to config.yaml next to docker-compose.yml and edit.
+
+# HTTP listen address.
+listen: ":8090"
+# SQLite database file (mounted volume in compose).
+db_path: /data/cron-checker.db
+# Shared secret: must equal CRON_AGENT_TOKEN on every agent. Required.
+token: "change-me"
+# Poll settings.
+poll_interval: 300s
+poll_concurrency: 10
+poll_timeout: 15s
+# Agent HTTP port on the target hosts.
+agent_port: "9300"
+# Retention.
+snapshot_retention_days: 7
+removed_retention_hours: 72
+log_level: info
+
+# Agent inventory. One line per host; agents removed from this list are
+# deleted from the web UI and the database on the next poll cycle.
+agents:
+  - hostname: web1
+    ip: 192.168.0.10
+  - hostname: db1
+    ip: 192.168.0.20

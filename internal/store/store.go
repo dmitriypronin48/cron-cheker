@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/example/cron-checker/internal/model"
@@ -60,6 +61,12 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_agent ON cron_snapshots(agent_id, colle
 func Fingerprint(e model.CronEntry) string {
 	h := sha256.Sum256([]byte(e.Source + "\x00" + e.Path + "\x00" + e.User + "\x00" + e.RawLine + "\x00" + strconv.Itoa(e.LineNo)))
 	return hex.EncodeToString(h[:])
+}
+
+// AgentTarget is one agent entry from the server config file (inventory).
+type AgentTarget struct {
+	Hostname string `yaml:"hostname"`
+	IP       string `yaml:"ip"`
 }
 
 // AgentRow is a single agent with computed entry counts.
@@ -305,6 +312,82 @@ func (s *Store) MarkAgentOffline(ctx context.Context, id int64) error {
 		return fmt.Errorf("mark agent offline: %w", err)
 	}
 	return nil
+}
+
+// DeleteAgent removes an agent with all its entries and snapshots
+// (foreign keys are ON DELETE CASCADE).
+func (s *Store) DeleteAgent(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM agents WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete agent: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("delete agent %d: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
+// SyncAgents reconciles the agents table with the desired inventory from the
+// config file: missing agents are added, agents absent from the inventory are
+// deleted (together with their entries and snapshots). Returns the numbers of
+// added and removed agents.
+func (s *Store) SyncAgents(ctx context.Context, targets []AgentTarget) (added, removed int, err error) {
+	desired := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		hostname, ip := strings.TrimSpace(t.Hostname), strings.TrimSpace(t.IP)
+		if hostname == "" || ip == "" {
+			return 0, 0, fmt.Errorf("agent inventory: hostname and ip are required (got %q, %q)", t.Hostname, t.IP)
+		}
+		desired[hostname+"\x00"+ip] = true
+		res, err := s.db.ExecContext(ctx,
+			`INSERT INTO agents(hostname, ip) VALUES(?, ?) ON CONFLICT(hostname, ip) DO NOTHING`, hostname, ip)
+		if err != nil {
+			return 0, 0, fmt.Errorf("sync add agent: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			added++
+		}
+	}
+
+	current, err := s.ListAgents(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, a := range current {
+		if desired[a.Hostname+"\x00"+a.IP] {
+			continue
+		}
+		if err := s.DeleteAgent(ctx, a.ID); err != nil {
+			return added, removed, err
+		}
+		removed++
+	}
+	return added, removed, nil
+}
+
+// ListNewEntries returns entries first seen within the last 24h that are still
+// active and unacknowledged, joined with the agent's hostname and ip. Used by
+// the cron_checker_new_entry metric.
+func (s *Store) ListNewEntries(ctx context.Context) ([]SearchRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+entryColumns+`, a.hostname, a.ip
+        FROM cron_entries e JOIN agents a ON a.id = e.agent_id
+        WHERE e.first_seen_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-24 hours')
+          AND e.status = 'active' AND e.acked_at IS NULL
+        ORDER BY a.hostname, e.source, e.path, e.line_no`)
+	if err != nil {
+		return nil, fmt.Errorf("list new entries: %w", err)
+	}
+	defer rows.Close()
+	var out []SearchRow
+	for rows.Next() {
+		var r SearchRow
+		if err := scanSearchRow(rows, &r); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ListEntries returns entries for an agent, optionally filtered.

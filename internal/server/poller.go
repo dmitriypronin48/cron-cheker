@@ -20,6 +20,10 @@ type PollerConfig struct {
 	Timeout     time.Duration
 	Token       string
 	AgentPort   string
+	// Targets returns the desired agent inventory from the config file.
+	// Re-read on every poll cycle; a non-nil error aborts the sync (the
+	// previous agent set is kept) but not polling.
+	Targets func() ([]store.AgentTarget, error)
 }
 
 // Poller periodically polls all agents over HTTP and stores their reports.
@@ -59,6 +63,7 @@ func NewPoller(cfg PollerConfig, st *store.Store, log *slog.Logger, m *Metrics) 
 
 // Run starts the poll loop and blocks until ctx is cancelled.
 func (p *Poller) Run(ctx context.Context) {
+	p.syncAgents(ctx)
 	p.pollAll(ctx) // initial sweep so the UI has data immediately
 	ticker := time.NewTicker(p.cfg.Interval)
 	defer ticker.Stop()
@@ -67,8 +72,31 @@ func (p *Poller) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			p.syncAgents(ctx)
 			p.pollAll(ctx)
 		}
+	}
+}
+
+// syncAgents reconciles the database with the config file inventory:
+// agents added to the file appear in the UI, agents removed from the file
+// are deleted from the DB (with their entries and snapshots).
+func (p *Poller) syncAgents(ctx context.Context) {
+	if p.cfg.Targets == nil {
+		return
+	}
+	targets, err := p.cfg.Targets()
+	if err != nil {
+		p.log.WarnContext(ctx, "agent inventory reload failed, keeping previous agents", "error", err)
+		return
+	}
+	added, removed, err := p.store.SyncAgents(ctx, targets)
+	if err != nil {
+		p.log.WarnContext(ctx, "agent inventory sync failed", "error", err)
+		return
+	}
+	if added > 0 || removed > 0 {
+		p.log.InfoContext(ctx, "agent inventory synced", "added", added, "removed", removed)
 	}
 }
 

@@ -9,26 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/example/cron-checker/internal/server"
 	"github.com/example/cron-checker/internal/store"
 )
-
-type config struct {
-	Listen                string
-	DBPath                string
-	Token                 string
-	PollInterval          time.Duration
-	PollConcurrency       int
-	PollTimeout           time.Duration
-	AgentPort             string
-	SnapshotRetentionDays int
-	RemovedRetentionHours int
-	LogLevel              string
-}
 
 func env(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -37,29 +23,20 @@ func env(key, def string) string {
 	return def
 }
 
-func envInt(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
-}
-
-func envDur(key string, def time.Duration) time.Duration {
-	if v := os.Getenv(key); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return def
-}
-
-func loadConfig() config {
-	healthcheck := flag.Bool("healthcheck", false, "perform a GET /healthz against SERVER_LISTEN and exit 0/1 (for container healthchecks)")
+func main() {
+	configPath := flag.String("config",
+		env("CRON_CHECKER_CONFIG", "/etc/cron-checker/server.yaml"),
+		"path to the server config file (YAML: settings + agent inventory)")
+	healthcheck := flag.Bool("healthcheck", false, "perform a GET /healthz against the listen address and exit 0/1 (for container healthchecks)")
 	flag.Parse()
 	if *healthcheck {
-		url := "http://" + env("SERVER_LISTEN", ":8090") + "/healthz"
+		listen := ":8090"
+		if cfg, err := server.LoadConfig(*configPath); err == nil && cfg.Listen != "" {
+			listen = cfg.Listen
+		} else if v := os.Getenv("SERVER_LISTEN"); v != "" {
+			listen = v
+		}
+		url := "http://" + listen + "/healthz"
 		resp, err := http.Get(url)
 		if err != nil || resp.StatusCode != http.StatusOK {
 			if resp != nil {
@@ -71,23 +48,12 @@ func loadConfig() config {
 		_ = resp.Body.Close()
 		os.Exit(0)
 	}
-	cfg := config{
-		Listen:                env("SERVER_LISTEN", ":8090"),
-		DBPath:                env("DB_PATH", "/data/cron-checker.db"),
-		Token:                 os.Getenv("CRON_SERVER_TOKEN"),
-		PollInterval:          envDur("POLL_INTERVAL", 300*time.Second),
-		PollConcurrency:       envInt("POLL_CONCURRENCY", 10),
-		PollTimeout:           envDur("POLL_TIMEOUT", 15*time.Second),
-		AgentPort:             env("AGENT_PORT", "9300"),
-		SnapshotRetentionDays: envInt("SNAPSHOT_RETENTION_DAYS", 7),
-		RemovedRetentionHours: envInt("REMOVED_RETENTION_HOURS", 72),
-		LogLevel:              env("LOG_LEVEL", "info"),
-	}
-	return cfg
-}
 
-func main() {
-	cfg := loadConfig()
+	cfg, err := server.LoadConfig(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "load config:", err)
+		os.Exit(1)
+	}
 
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(cfg.LogLevel)); err != nil {
@@ -96,10 +62,7 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
 
-	if cfg.Token == "" {
-		log.Error("CRON_SERVER_TOKEN is required")
-		os.Exit(1)
-	}
+	log.Info("config loaded", "path", *configPath, "agents", len(cfg.Agents))
 
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
@@ -125,6 +88,7 @@ func main() {
 		Timeout:     cfg.PollTimeout,
 		Token:       cfg.Token,
 		AgentPort:   cfg.AgentPort,
+		Targets:     func() ([]store.AgentTarget, error) { c, err := server.LoadConfig(*configPath); return c.Agents, err },
 	}, st, log, metrics)
 	go poller.Run(ctx)
 	go server.CleanupLoop(ctx, st, cfg.SnapshotRetentionDays, cfg.RemovedRetentionHours, log)

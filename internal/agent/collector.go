@@ -73,10 +73,10 @@ func Collect(cfg Config) ([]model.CronEntry, error) {
 	entries = append(entries, collectSpoolDir(cfg.SpoolCron, model.SourceUserCrontab, true)...)
 	entries = append(entries, collectCrontabFile(cfg.EtcCrontab, model.SourceSystemCrontab, "root")...)
 	entries = append(entries, collectDirFiles(cfg.CronD, model.SourceCronD, "root")...)
-	entries = append(entries, collectDirNames(cfg.CronHourly, model.SourceCronHourly)...)
-	entries = append(entries, collectDirNames(cfg.CronDaily, model.SourceCronDaily)...)
-	entries = append(entries, collectDirNames(cfg.CronWeekly, model.SourceCronWeekly)...)
-	entries = append(entries, collectDirNames(cfg.CronMonthly, model.SourceCronMonthly)...)
+	entries = append(entries, collectPeriodicDir(cfg.CronHourly, model.SourceCronHourly)...)
+	entries = append(entries, collectPeriodicDir(cfg.CronDaily, model.SourceCronDaily)...)
+	entries = append(entries, collectPeriodicDir(cfg.CronWeekly, model.SourceCronWeekly)...)
+	entries = append(entries, collectPeriodicDir(cfg.CronMonthly, model.SourceCronMonthly)...)
 	entries = append(entries, collectSystemdTimers(cfg)...)
 	entries = append(entries, collectUserCrontabs(cfg)...)
 	return entries, nil
@@ -162,10 +162,12 @@ func collectDirFiles(dir, source, user string) []model.CronEntry {
 	return entries
 }
 
-// collectDirNames records one entry per executable file name in a periodic
-// cron dir (cron.hourly etc.): raw_line is the file NAME only, line_no is 0,
-// user is the file owner.
-func collectDirNames(dir, source string) []model.CronEntry {
+// collectPeriodicDir parses every regular file in a periodic cron dir
+// (cron.hourly, cron.daily, cron.weekly, cron.monthly) like a crontab:
+// each non-comment, non-blank line of the file becomes an entry with the
+// file owner as user and the original 1-based line number. The file path is
+// kept in path, so the script name remains visible in the UI.
+func collectPeriodicDir(dir, source string) []model.CronEntry {
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -176,18 +178,17 @@ func collectDirNames(dir, source string) []model.CronEntry {
 			continue
 		}
 		path := filepath.Join(dir, f.Name())
-		owner := ""
-		if info, err := os.Stat(path); err == nil {
-			owner = fileOwner(info)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			continue
 		}
-		entries = append(entries, model.CronEntry{
-			Source:  source,
-			Path:    path,
-			User:    owner,
-			RawLine: f.Name(),
-			LineNo:  0,
-			Enabled: true,
-		})
+		owner := "root"
+		if info, err := os.Stat(path); err == nil {
+			if o := fileOwner(info); o != "" {
+				owner = o
+			}
+		}
+		entries = append(entries, ParseCrontabContent(source, path, owner, content)...)
 	}
 	return entries
 }

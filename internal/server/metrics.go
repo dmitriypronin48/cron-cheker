@@ -25,6 +25,7 @@ type Metrics struct {
 	agentLastSeen   *prometheus.GaugeVec
 	entriesTotal    *prometheus.GaugeVec
 	newEntries      *prometheus.GaugeVec
+	newEntry        *prometheus.GaugeVec
 	pollDuration    prometheus.Histogram
 	pollErrorsTotal *prometheus.CounterVec
 
@@ -65,6 +66,11 @@ func NewMetrics(st *store.Store, log *slog.Logger) *Metrics {
 			Name:      "new_entries_24h",
 			Help:      "Number of entries first seen within the last 24h, unacked.",
 		}, []string{"hostname"}),
+		newEntry: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: "cron_checker",
+			Name:      "new_entry",
+			Help:      "A cron entry first seen within the last 24h that is still unacked (1). Labels identify the added line and its agent.",
+		}, []string{"hostname", "ip", "source", "raw_line"}),
 		pollDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: "cron_checker",
 			Name:      "poll_duration_seconds",
@@ -81,7 +87,7 @@ func NewMetrics(st *store.Store, log *slog.Logger) *Metrics {
 	m.registry.MustRegister(
 		collectors.NewGoCollector(),
 		m.agentsTotal, m.agentUp, m.agentLastSeen, m.entriesTotal,
-		m.newEntries, m.pollDuration, m.pollErrorsTotal,
+		m.newEntries, m.newEntry, m.pollDuration, m.pollErrorsTotal,
 	)
 	return m
 }
@@ -126,6 +132,7 @@ func (m *Metrics) refresh(ctx context.Context) {
 	m.agentUp.Reset()
 	m.agentLastSeen.Reset()
 	m.newEntries.Reset()
+	m.newEntry.Reset()
 	for _, a := range agents {
 		up := 0.0
 		if a.Status == model.AgentStatusOnline {
@@ -155,6 +162,15 @@ func (m *Metrics) refresh(ctx context.Context) {
 	}
 	for k, n := range counts {
 		m.entriesTotal.WithLabelValues(k.host, k.source, k.status).Set(float64(n))
+	}
+
+	newEntries, err := m.store.ListNewEntries(ctx)
+	if err != nil {
+		m.log.WarnContext(ctx, "metrics refresh: list new entries", "error", err)
+	} else {
+		for _, e := range newEntries {
+			m.newEntry.WithLabelValues(e.Hostname, e.IP, e.Source, e.RawLine).Set(1)
+		}
 	}
 }
 

@@ -24,13 +24,13 @@ Pull-модель: центральный **сервер** периодичес�
                                               └─────────────────┘
 ```
 
-- Сервер опрашивает агентов горутинами с семафором (`POLL_CONCURRENCY`,
-  по умолчанию 10) и таймаутом (`POLL_TIMEOUT`, 15s). Один цикл = одна
+- Сервер опрашивает агентов горутинами с семафором (`poll_concurrency`,
+  по умолчанию 10) и таймаутом (`poll_timeout`, 15s). Один цикл = одна
   попытка на агента, без retry-штормов.
 - Агент кэширует сбор данных на `COLLECT_INTERVAL` (5 мин): запросы сервера
   не вызывают повторное чтение файлов.
-- Автообнаружения агентов нет — машины добавляются вручную (UI-форма или
-  `POST /api/v1/agents`).
+- Автообнаружения агентов нет — машины перечисляются в инвентаре
+  конфиг-файла сервера (`agents:`), добавление через веб отсутствует.
 
 ## Быстрый старт
 
@@ -45,11 +45,18 @@ make docker-image            # собрать cron-checker-server:latest
 docker load -i cron-checker-server-0.1.0.tar
 
 cd deploy
-cp .env.example .env        # задать CRON_SERVER_TOKEN!
+cp config.example.yaml config.yaml   # задать token и список агентов!
 docker compose up -d
 ```
 
 UI: http://localhost:8090 · `/healthz` · `/metrics`.
+
+Настройки сервера и инвентарь агентов живут в одном файле `config.yaml`
+(в контейнере: `/etc/cron-checker/server.yaml`). Добавление агентов через
+веб-интерфейс отсутствует — хосты добавляются и удаляются только в этом
+файле: агенты, удалённые из файла, стираются из веба и БД в следующем
+цикле опроса (записи «offline» не зависают). Файл перечитывается каждый
+цикл опроса, перезапуск не нужен.
 
 ### Агент (Linux)
 
@@ -63,7 +70,8 @@ sudoedit /etc/cron-checker/agent.env              # CRON_AGENT_TOKEN
 sudo systemctl restart cron-checker-agent
 ```
 
-Затем в UI «Add agent» → hostname + IP хоста.
+Затем добавьте хост (hostname + IP) в `agents:` файла `config.yaml`
+сервера — на следующем цикле опроса он появится в вебе.
 
 ### Сборка из исходников
 
@@ -96,7 +104,8 @@ curl -H "Authorization: Bearer $CRON_AGENT_TOKEN" http://127.0.0.1:9300/api/v1/c
 
 1. `/var/spool/cron/crontabs/*` (Debian/Ubuntu) и `/var/spool/cron/*` (RHEL)
 2. `/etc/crontab`, `/etc/cron.d/*`
-3. `/etc/cron.hourly|daily|weekly|monthly/*` (имена файлов + владелец)
+3. `/etc/cron.hourly|daily|weekly|monthly/*` — **содержимое файлов**
+   построчно (имя файла остаётся в колонке path, владелец — в user)
 4. systemd timers: `systemctl list-timers --all --no-pager --output=json`
    + `OnCalendar=` из unit-файлов (`/etc/systemd/system`, `/usr/lib/systemd/system`)
 5. `crontab -l -u <user>` для всех пользователей из `/etc/passwd`
@@ -126,7 +135,6 @@ curl -H "Authorization: Bearer $CRON_AGENT_TOKEN" http://127.0.0.1:9300/api/v1/c
 | GET | `/agents/{id}/history` | UI: diff snapshots |
 | GET | `/search?q=` | UI: поиск |
 | GET | `/api/v1/agents` | JSON список агентов |
-| POST | `/api/v1/agents` | регистрация агента `{hostname, ip}` |
 | GET | `/api/v1/agents/{id}/cron` | JSON entries (`?source=&user=&only_new=1`) |
 | GET | `/api/v1/agents/{id}/history` | JSON snapshots (последние N) |
 | POST | `/api/v1/entries/{id}/ack` | «закрыть» новую строку |
@@ -136,28 +144,47 @@ curl -H "Authorization: Bearer $CRON_AGENT_TOKEN" http://127.0.0.1:9300/api/v1/c
 Агент: `GET /healthz`, `GET /metrics` (без авторизации),
 `GET /api/v1/cron` (требует Bearer-токен, constant-time сравнение).
 
+## Конфигурация сервера
+
+Единый YAML-файл (по умолчанию `/etc/cron-checker/server.yaml`, путь
+переопределяется флагом `-config` или переменной окружения
+`CRON_CHECKER_CONFIG`). Формат — `deploy/config.example.yaml`:
+
+```yaml
+listen: ":8090"                  # HTTP-адрес
+db_path: /data/cron-checker.db    # файл SQLite
+token: "secret"                   # = CRON_AGENT_TOKEN на агентах (обязателен)
+poll_interval: 300s               # период опроса агентов
+poll_concurrency: 10              # параллельных опросов
+poll_timeout: 15s                 # таймаут на агента
+agent_port: "9300"                # порт агента на хостах
+snapshot_retention_days: 7        # хранение сырых snapshot-JSON
+removed_retention_hours: 72       # хранение записей со статусом removed
+log_level: info
+agents:                           # инвентарь: один хост — одна пара hostname/ip
+  - hostname: web1
+    ip: 192.168.0.10
+  - hostname: db1
+    ip: 192.168.0.20
+```
+
+Файл перечитывается каждый цикл опроса: добавленные хосты появляются в вебе,
+удалённые стираются из веба и БД вместе со своими записями и снапшотами.
+Если файл временно недоступен/испорчен — сервер продолжает опрос с прежним
+набором агентов и пишет warning в лог.
+
 ## Переменные окружения
 
 ### Сервер
 
-| Переменная | По умолчанию | Описание |
-|---|---|---|
-| `CRON_SERVER_TOKEN` | — | **обязателен**, = `CRON_AGENT_TOKEN` на агентах |
-| `SERVER_LISTEN` | `:8090` | адрес HTTP |
-| `DB_PATH` | `/data/cron-checker.db` | файл SQLite (volume в compose) |
-| `POLL_INTERVAL` | `300s` | период опроса агентов |
-| `POLL_CONCURRENCY` | `10` | параллельных опросов |
-| `POLL_TIMEOUT` | `15s` | таймаут на агента |
-| `AGENT_PORT` | `9300` | порт агента на хостах |
-| `SNAPSHOT_RETENTION_DAYS` | `7` | хранение сырых snapshot-JSON |
-| `REMOVED_RETENTION_HOURS` | `72` | хранение записей со статусом `removed` |
-| `LOG_LEVEL` | `info` | slog |
+Сервер настраивается только конфиг-файлом выше (см. «Конфигурация
+сервера»); переменные окружения не используются.
 
 ### Агент
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
-| `CRON_AGENT_TOKEN` | — | **обязателен**, = `CRON_SERVER_TOKEN` |
+| `CRON_AGENT_TOKEN` | — | **обязателен**, = `token` в конфиг-файле сервера |
 | `LISTEN_ADDR` | `:9300` | адрес HTTP |
 | `COLLECT_INTERVAL` | `300s` | кэш локального сбора (не путать с опросом) |
 | `LOG_LEVEL` | `info` | slog |
@@ -172,6 +199,7 @@ cron_checker_agent_up{hostname,ip}
 cron_checker_agent_last_seen_timestamp{hostname,ip}
 cron_checker_entries_total{hostname,source,status}
 cron_checker_new_entries_24h{hostname}
+cron_checker_new_entry{hostname,ip,source,raw_line}   # 1 для каждой новой (≤24ч, не acked) записи
 cron_checker_poll_duration_seconds   (histogram)
 cron_checker_poll_errors_total{hostname}
 ```
@@ -209,7 +237,7 @@ scrape_configs:
 ├── internal/store            # SQLite, миграции, fingerprint
 ├── internal/model            # общие типы
 ├── web/                      # templates + static (embed, HTMX локально)
-├── deploy/                   # Dockerfile, compose, systemd, nfpm, scripts, env-образцы
+├── deploy/                   # Dockerfile, compose, config.example.yaml, systemd, nfpm, scripts, env-образцы
 ├── Makefile
 └── TASK.md                   # исходное ТЗ
 ```
@@ -218,11 +246,15 @@ scrape_configs:
 
 - Модуль Go: `github.com/example/cron-checker` (при публикации замените на
   свой путь).
+- Агенты добавляются только через инвентарь в конфиг-файле сервера: каждый
+  цикл опроса БД синхронизируется с файлом (добавленные — inserted,
+  удалённые — deleted cascade вместе с записями и снапшотами).
 - Маршрутизация — stdlib `net/http` ServeMux (Go 1.22+ pattern) на агенте,
   chi на сервере.
 - Токен сравнивается через `crypto/subtle.ConstantTimeCompare`; токен
-  существует только в env, в репозитории его нет.
+  существует только в конфиг-файле сервера и в env агентов, в репозитории
+  его нет.
 - Удалённые записи помечаются `status=removed` и чистятся через
-  `REMOVED_RETENTION_HOURS` (по умолчанию 72ч, в ТЗ — 24ч; меняется env).
+  `removed_retention_hours` конфига (по умолчанию 72ч, в ТЗ — 24ч).
 - Healthcheck в контейнере: `cron-checker-server -healthcheck` (в образе
   нет curl, бинарник проверяет сам себя).

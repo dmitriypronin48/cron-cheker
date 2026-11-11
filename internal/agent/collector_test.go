@@ -86,7 +86,7 @@ func TestCollect(t *testing.T) {
 	write("etc/crontab", "SHELL=/bin/sh\n17 * * * * root run-parts /etc/cron.hourly\n")
 	// cron.d.
 	write("etc/cron.d/backup", "# backup\n15 2 * * * root /usr/local/bin/backup --full\n")
-	// Periodic dirs: file NAME is the entry.
+	// Periodic dirs: file contents are parsed (one entry per line).
 	write("etc/cron.hourly/0anacron", "#!/bin/sh\ntrue\n")
 	write("etc/cron.daily/logrotate", "#!/bin/sh\n/usr/sbin/logrotate /etc/logrotate.conf\n")
 	write("etc/cron.weekly/man-db", "#!/bin/sh\nman-db rebuilt\n")
@@ -161,24 +161,24 @@ func TestCollect(t *testing.T) {
 	if e.User != "root" || e.LineNo != 2 {
 		t.Errorf("cron.d entry wrong: %+v", e)
 	}
-	// Periodic dirs: raw_line is the file NAME, line_no 0, user = owner ("" on non-Linux).
-	e = byKey[model.SourceCronDaily+"|"+filepath.Join(root, "etc/cron.daily/logrotate")+"|logrotate"]
-	if e.LineNo != 0 || !e.Enabled {
+	// Periodic dirs: file CONTENTS are parsed line by line, user = file owner.
+	e = byKey[model.SourceCronDaily+"|"+filepath.Join(root, "etc/cron.daily/logrotate")+"|/usr/sbin/logrotate /etc/logrotate.conf"]
+	if e.LineNo != 2 || !e.Enabled {
 		t.Errorf("cron.daily entry wrong: %+v", e)
 	}
 	if runtime.GOOS == "linux" && e.User == "" {
 		t.Errorf("cron.daily owner should resolve on linux: %+v", e)
 	}
-	e = byKey[model.SourceCronHourly+"|"+filepath.Join(root, "etc/cron.hourly/0anacron")+"|0anacron"]
-	if e.Source != model.SourceCronHourly || e.RawLine != "0anacron" {
+	e = byKey[model.SourceCronHourly+"|"+filepath.Join(root, "etc/cron.hourly/0anacron")+"|true"]
+	if e.Source != model.SourceCronHourly || e.RawLine != "true" || e.LineNo != 2 {
 		t.Errorf("cron.hourly entry wrong: %+v", e)
 	}
-	e = byKey[model.SourceCronWeekly+"|"+filepath.Join(root, "etc/cron.weekly/man-db")+"|man-db"]
-	if e.Source != model.SourceCronWeekly {
+	e = byKey[model.SourceCronWeekly+"|"+filepath.Join(root, "etc/cron.weekly/man-db")+"|man-db rebuilt"]
+	if e.Source != model.SourceCronWeekly || e.LineNo != 2 {
 		t.Errorf("cron.weekly entry wrong: %+v", e)
 	}
-	e = byKey[model.SourceCronMonthly+"|"+filepath.Join(root, "etc/cron.monthly/apt")+"|apt"]
-	if e.Source != model.SourceCronMonthly {
+	e = byKey[model.SourceCronMonthly+"|"+filepath.Join(root, "etc/cron.monthly/apt")+"|apt update"]
+	if e.Source != model.SourceCronMonthly || e.LineNo != 2 {
 		t.Errorf("cron.monthly entry wrong: %+v", e)
 	}
 	// systemd timer: OnCalendar becomes schedule, raw_line is unit name.

@@ -2,12 +2,6 @@
 {{template "header" .}}
 <div class="page-head">
   <h1>Agents</h1>
-  <form class="inline-form" action="/api/v1/agents" method="post"
-        onsubmit="return addAgent(this)">
-    <input name="hostname" placeholder="hostname" required>
-    <input name="ip" placeholder="IP address" required>
-    <button type="submit">Add agent</button>
-  </form>
 </div>
 <table class="tbl">
   <thead>
@@ -28,18 +22,9 @@
       <td>{{.Timezone}}</td>
     </tr>
     {{else}}
-    <tr><td colspan="7" class="muted">No agents yet. Add one above.</td></tr>
+    <tr><td colspan="7" class="muted">No agents configured. Add agents to the server config file.</td></tr>
     {{end}}
   </tbody>
 </table>
-<script>
-function addAgent(f) {
-  var data = {hostname: f.hostname.value, ip: f.ip.value};
-  fetch('/api/v1/agents', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)})
-    .then(function(r){ if (!r.ok) { alert('Failed to add agent'); return; } location.reload(); })
-    .catch(function(){ alert('Failed to add agent'); });
-  return false;
-}
-</script>
 {{template "footer" .}}
 {{end}}

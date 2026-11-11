@@ -5,11 +5,8 @@ services:
     restart: unless-stopped
     ports:
       - "8090:8090"
-    env_file:
-      - .env
-    environment:
-      DB_PATH: /data/cron-checker.db
     volumes:
+      - ./config.yaml:/etc/cron-checker/server.yaml:ro
       - cron_checker_data:/data
     healthcheck:
       test: ["CMD", "/usr/local/bin/cron-checker-server", "-healthcheck"]

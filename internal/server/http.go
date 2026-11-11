@@ -60,7 +60,6 @@ func NewServer(st *store.Store, metrics *Metrics, log *slog.Logger) (*Server, er
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/agents", s.handleAPIAgents)
-		r.Post("/agents", s.handleAPIAddAgent)
 		r.Get("/agents/{id}/cron", s.handleAPIAgentCron)
 		r.Get("/agents/{id}/history", s.handleAPIAgentHistory)
 		r.Post("/entries/{id}/ack", s.handleAPIAck)
@@ -177,29 +176,6 @@ func (s *Server) handleAPIAgents(w http.ResponseWriter, r *http.Request) {
 		agents = []store.AgentRow{}
 	}
 	writeJSON(w, http.StatusOK, agents)
-}
-
-func (s *Server) handleAPIAddAgent(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Hostname string `json:"hostname"`
-		IP       string `json:"ip"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	body.Hostname = strings.TrimSpace(body.Hostname)
-	body.IP = strings.TrimSpace(body.IP)
-	if body.Hostname == "" || body.IP == "" {
-		writeError(w, http.StatusBadRequest, "hostname and ip are required")
-		return
-	}
-	id, err := s.st.AddAgent(r.Context(), body.Hostname, body.IP)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
 }
 
 func entryFilterFromQuery(r *http.Request) store.EntryFilter {
